@@ -1,0 +1,107 @@
+#!/bin/sh
+# Author: Louie Chen <louie23 _at_ lavabit com>
+# License: GPL-3+
+# Description: This script will generate swatchrc and run swatch
+# The swatchrc is in /tmp/swatch.XXXXXXXX
+# Usage: ./start-swatch [--dry-run] [keep_swatchrc] [ignore \"ignore pattern\"] logfile pattern [pattern2...]"
+
+cleanup_tempfile_on_exit() {
+    cleanup() {
+        rm -f $configFile
+    }
+
+	trap "cleanup" EXIT
+}
+
+start() {
+	if [ -z "$2" ]
+	then
+		echo "usage: $0 [--dry-run] [keep_swatchrc] [ignore \"ignore pattern\"] logfile pattern [pattern2...]"
+		echo "keep_swatchrc: don't delete swatchrc in /tmp/swatch.XXXXXXXX"
+		exit 0
+	fi
+
+	logFile=$1
+	shift
+	pattern=$*
+
+	if [ ! -e "$logFile" ]
+	then
+		echo "The $logFile is not exist, so quit"
+		exit 1
+	fi
+
+	configFile=$(mktemp /tmp/swatch.XXXXXXXX)
+
+	if [ "$keep_swatchrc" != "1" ]
+	then
+		cleanup_tempfile_on_exit
+	fi
+
+	if [ -n "$ignore" ]
+	then
+	cat << EOF >> $configFile
+ignore /$ignore/
+
+EOF
+	fi
+
+	pattern=$(echo $pattern | tr " " "|")
+	cat << EOF >> $configFile
+watchfor /$pattern/
+pipe cat > /tmp/swatch.tmp; start-osd_cat /tmp/swatch.tmp; sleep 1; rm /tmp/swatch.tmp
+threshold track_by=\$1,type=limit,count=2,seconds=10
+EOF
+
+	command="$DryRun swatch -c $configFile -t $logFile --pid-file $configFile.pid --daemon"
+
+	eval $command
+
+	if [ -n "$DryRun" ]
+	then
+		echo
+		echo cat $configFile
+		cat $configFile
+	fi
+}
+
+stop() {
+	pidFile=$(find /tmp -name "swatch.*.pid" 2>/dev/null)
+	if [ -n "$pidFile" ]
+	then
+		$DryRun kill $(cat $pidFile)
+		$DryRun rm $pidFile
+		$DryRun rm ~/.swatch_script.*
+	fi
+}
+
+
+if [ "$1" = "--dry-run" ]
+then
+	DryRun=echo
+	shift
+fi
+
+if [ "$1" = "keep_swatchrc" ]
+then
+	keep_swatchrc=1
+	shift
+fi
+
+if [ "$1" = "ignore" ]
+then
+	ignore=$2
+	shift
+	shift
+fi
+
+action=$(basename $0 | awk -F"-" '{print $1}')
+
+case $action in
+	start)
+		start $*
+		;;
+	stop)
+		stop
+		;;
+esac
